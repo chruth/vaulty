@@ -80,6 +80,11 @@ backup_file() {
   local absolute_path="${data_dir}/${file}"
 
   if [[ -e "${absolute_path}" ]]; then
+    if [[ -d "${absolute_path}" && ! "$(ls -A "${absolute_path}")" ]]; then
+      log "INFO" "${file} is an empty directory. Skipping."
+      return
+    fi
+
     local file_checksum
     if [[ -d "${absolute_path}" ]]; then
       file_checksum=$(find "${absolute_path}" -type f -exec sha256sum {} + | cut -d ' ' -f 1)
