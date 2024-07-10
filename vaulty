@@ -1,0 +1,126 @@
+#!/bin/bash
+
+set -euo pipefail
+
+die() {
+  echo "$@" >&2
+  notify "$@"
+  exit 1
+}
+
+notify() {
+  local message="${1:-undefined}"
+  local gotify_url
+  gotify_url="$(pass show vaultwarden)"
+  curl --silent --output /dev/null "${gotify_url}" \
+    -F "title=Vaultwarden Backup Script" \
+    -F "message=${message}" \
+    -F "priority=5"
+}
+
+log() {
+  local level="${1:-CRIT}"
+  local message="${2:-undefined}"
+  local timestamp
+  timestamp="$(date --rfc-3339=seconds)"
+  logger "${timestamp} ${level} ${message}"
+  if [[ "${level}" == "CRIT" || "${level}" == "WARN" ]]; then
+    notify "${message}"
+  fi
+}
+
+verify_backup() {
+  local file="${1}"
+  local true_checksum="${2}"
+  local absolute_path="${data_dir}/${file}"
+
+  log "INFO" "Starting integrity check for ${file}"
+
+  local extracted_checksum
+  if [[ -d "${absolute_path}" ]]; then
+    extracted_checksum=$(tar --extract \
+      --file "${backup_archive}" --wildcards "${file}"/* \
+      --to-command=sha256sum | cut -d ' ' -f 1)
+  else
+    extracted_checksum=$(tar --extract \
+      --file "${backup_archive}" "${file}" \
+      --to-command=sha256sum | cut -d ' ' -f 1)
+  fi
+
+  if [[ "$true_checksum" != "$extracted_checksum" ]]; then
+    log "CRIT" "Checksum mismatch on ${file}"
+  fi
+}
+
+backup_database() {
+  if [[ -f "${data_db}" ]]; then
+    local absolute_path_db="${data_dir}/${backup_file_db_sqlite}"
+    log "INFO" "Backup Vaultwarden Sqlite3 database ${backup_file_db_sqlite}"
+
+    sqlite3 \
+      "${data_db}" \
+      ".backup '${absolute_path_db}'" || die "Generating sqlite3 backup failed"
+
+    tar --create \
+      --file "${backup_archive}" \
+      --directory="${data_dir}" \
+      "${backup_file_db_sqlite}" || die "Tar Archive creation failed"
+
+    local database_checksum
+    database_checksum=$(sha256sum "${absolute_path_db}" | cut -d ' ' -f 1)
+    rm -f "${absolute_path_db}"
+    verify_backup "${backup_file_db_sqlite}" "${database_checksum}"
+  else
+    die "db.sqlite3 not found"
+  fi
+}
+
+backup_file() {
+  local file="${1}"
+  local absolute_path="${data_dir}/${file}"
+
+  if [[ -e "${absolute_path}" ]]; then
+    local file_checksum
+    if [[ -d "${absolute_path}" ]]; then
+      file_checksum=$(find "${absolute_path}" -type f -exec sha256sum {} + | cut -d ' ' -f 1)
+    else
+      file_checksum=$(sha256sum "${absolute_path}" | cut -d ' ' -f 1)
+    fi
+
+    log "INFO" "Append ${file} to Archive"
+    tar --append \
+      --file "${backup_archive}" \
+      --directory="${data_dir}" \
+      "${file}" || die "Adding ${file} to archive failed"
+
+    verify_backup "${file}" "${file_checksum}"
+  else
+    log "WARN" "${file} not found"
+  fi
+}
+
+main() {
+  log "INFO" "##################################"
+  log "INFO" "Vaultwarden backup started"
+
+  local now
+  now="$(date '+%Y%m%d-%H%M%S')"
+  local data_dir="/opt/vaultwarden/data"
+  local data_db="${data_dir}/db.sqlite3"
+  local backup_dir="/opt/vaultwarden/backups"
+  local backup_archive="${backup_dir}/vaultwarden_${now}.tar"
+  local backup_file_db_sqlite="db_${now}.sqlite3"
+
+  mkdir --parents "${backup_dir}"
+
+  backup_database
+  backup_file "config.json"
+  backup_file "rsa_key.pub"
+  backup_file "rsa_key.pub.pem"
+  backup_file "attachments"
+  backup_file "sends"
+
+  log "INFO" "Vaultwarden backup finished"
+}
+
+main
