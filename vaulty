@@ -120,7 +120,7 @@ main() {
 
   backup_database
   backup_file "config.json"
-  backup_file "rsa_key.pub"
+  backup_file "rsa_key.pem"
   backup_file "rsa_key.pub.pem"
   backup_file "attachments"
   backup_file "sends"
