@@ -1,0 +1,15 @@
+[Unit]
+Description=vaulty service
+After=default.target
+
+[Service]
+Type=oneshot
+User=containerboy
+ExecStart=/usr/bin/vaulty
+TimeoutStopSec=30s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vaulty
+
+[Install]
+WantedBy=multi-user.target
